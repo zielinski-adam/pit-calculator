@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Node.js
+node_modules/
+dist/
+.next/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Sensitive data
+*.xml
+
+# SQLite cache
+*.db
+
+# Coverage
+htmlcov/
+.coverage
+
+# Claude Code (lokalne ustawienia)
+.mcp.json
+.claude/settings.local.json
+
+# pnpm
+frontend/pnpm-workspace.yaml
+frontend/.npmrc
