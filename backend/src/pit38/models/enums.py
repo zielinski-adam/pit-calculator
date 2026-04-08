@@ -6,6 +6,7 @@ class AssetCategory(StrEnum):
     """Kategoria instrumentu z IBKR CSV."""
     STOCKS = "Stocks"
     OPTIONS = "Equity and Index Options"
+    TREASURY_BILLS = "Treasury Bills"
 
 
 class BuySell(StrEnum):
@@ -19,7 +20,9 @@ class TradeCode(StrEnum):
     OPEN = "O"
     CLOSE = "C"
     PARTIAL = "P"
-    # Inne kody (IA, IM, etc.) parsujemy ale nie wymagamy
+    EXPIRED = "Ep"       # Wygaśnięcie pozycji opcyjnej
+    EXERCISE = "Ex"      # Wykonanie opcji (kupujący)
+    ASSIGNMENT = "A"     # Przydzielenie opcji (sprzedający)
 
 
 class CorporateActionType(StrEnum):

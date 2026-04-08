@@ -31,6 +31,11 @@ def _make_trade(
     listing_exchange: str = "NASDAQ",
     isin: str = "US0378331005",
     multiplier: int = 1,
+    codes: list[str] | None = None,
+    underlying: str | None = None,
+    strike: str | None = None,
+    expiry: date | None = None,
+    option_type: str | None = None,
 ) -> Trade:
     """Stwórz syntetyczny Trade."""
     qty = Decimal(str(quantity))
@@ -50,6 +55,11 @@ def _make_trade(
         proceeds=proceeds,
         commission=Decimal(commission),
         multiplier=multiplier,
+        codes=codes or [],
+        underlying=underlying,
+        strike=Decimal(strike) if strike else None,
+        expiry=expiry,
+        option_type=option_type,
     )
 
 
@@ -637,3 +647,354 @@ class TestIntegration:
             assert lot.buy_settle_date >= lot.buy_trade_date
             assert lot.sell_settle_date >= lot.sell_trade_date
             assert isinstance(lot.profit_loss_pln, Decimal)
+
+
+# ────────────────────────────────────────────────────────────
+# Opcje -- multiplier, wygaśnięcie, exercise, assignment
+# ────────────────────────────────────────────────────────────
+
+# Helpers dla opcji
+_OPT_SYMBOL = "NBIS 20MAR26 150 C"
+_OPT_ISIN = "NL0009805522"
+_OPT_EXCHANGE = "CBOE"
+_OPT_UNDERLYING = "NBIS"
+_OPT_STRIKE = "150.00"
+_OPT_EXPIRY = date(2026, 3, 20)
+
+
+def _make_option_trade(
+    quantity: int | Decimal = 5,
+    price: str = "12.90",
+    trade_date: date = date(2025, 10, 22),
+    settle_date: date = date(2025, 10, 23),
+    codes: list[str] | None = None,
+    **kwargs,
+) -> Trade:
+    """Stwórz syntetyczny trade opcyjny (NBIS 20MAR26 150 C)."""
+    return _make_trade(
+        symbol=kwargs.pop("symbol", _OPT_SYMBOL),
+        isin=kwargs.pop("isin", _OPT_ISIN),
+        asset_category=AssetCategory.OPTIONS,
+        listing_exchange=kwargs.pop("listing_exchange", _OPT_EXCHANGE),
+        multiplier=kwargs.pop("multiplier", 100),
+        underlying=kwargs.pop("underlying", _OPT_UNDERLYING),
+        strike=kwargs.pop("strike", _OPT_STRIKE),
+        expiry=kwargs.pop("expiry", _OPT_EXPIRY),
+        option_type=kwargs.pop("option_type", "C"),
+        quantity=quantity,
+        price=price,
+        trade_date=trade_date,
+        settle_date=settle_date,
+        codes=codes,
+        **kwargs,
+    )
+
+
+class TestOptionsMultiplier:
+    """Testy mnożnika opcyjnego (×100) w kalkulacji FIFO."""
+
+    @pytest.mark.fifo
+    def test_option_buy_sell_with_multiplier(self, mock_nbp: MagicMock):
+        """Buy 5 calls @12.90, sell @15.00 → kwoty ×100."""
+        trades = [
+            _make_option_trade(
+                quantity=5, price="12.90", codes=["O"],
+                trade_date=date(2025, 10, 22), settle_date=date(2025, 10, 23),
+            ),
+            _make_option_trade(
+                quantity=-5, price="15.00", codes=["C"],
+                trade_date=date(2025, 10, 29), settle_date=date(2025, 10, 30),
+            ),
+        ]
+        result = run_fifo(trades, [], mock_nbp)
+
+        assert len(result.tax_lots) == 1
+        lot = result.tax_lots[0]
+
+        # buy_amount = 12.90 × 5 × 100 = 6450 USD
+        # buy_cost_pln = (6450 + 1.00) × 4.0 = 25804.00
+        expected_buy = (Decimal("12.90") * 5 * 100 + Decimal("1.00")) * Decimal("4.0")
+        assert lot.buy_cost_pln == expected_buy
+
+        # sell_amount = 15.00 × 5 × 100 = 7500 USD
+        # sell_proceeds_pln = (7500 - 1.00) × 4.0 = 29996.00
+        expected_sell = (Decimal("15.00") * 5 * 100 - Decimal("1.00")) * Decimal("4.0")
+        assert lot.sell_proceeds_pln == expected_sell
+
+        assert lot.profit_loss_pln == expected_sell - expected_buy
+        assert lot.profit_loss_pln > 0  # zysk
+
+    @pytest.mark.fifo
+    def test_option_multiplier_stock_unaffected(self, mock_nbp: MagicMock):
+        """Akcje z multiplier=1 — bez zmian w kalkulacji."""
+        trades = [
+            _make_trade(quantity=100, price="150.00",
+                        trade_date=date(2025, 1, 6), settle_date=date(2025, 1, 7)),
+            _make_trade(quantity=-100, price="160.00",
+                        trade_date=date(2025, 3, 17), settle_date=date(2025, 3, 18)),
+        ]
+        result = run_fifo(trades, [], mock_nbp)
+
+        assert len(result.tax_lots) == 1
+        lot = result.tax_lots[0]
+
+        # buy_cost = (150 × 100 + 1) × 4 = 60004.00
+        expected_buy = (Decimal("150.00") * 100 + Decimal("1.00")) * Decimal("4.0")
+        assert lot.buy_cost_pln == expected_buy
+
+    @pytest.mark.fifo
+    def test_option_partial_close(self, mock_nbp: MagicMock):
+        """Buy 10 kontraktów, sell 6 → 4 otwarte z poprawnym cost basis."""
+        trades = [
+            _make_option_trade(
+                quantity=10, price="12.90", codes=["O"],
+                trade_date=date(2025, 10, 22), settle_date=date(2025, 10, 23),
+            ),
+            _make_option_trade(
+                quantity=-6, price="15.00", codes=["C", "P"],
+                trade_date=date(2025, 10, 29), settle_date=date(2025, 10, 30),
+            ),
+        ]
+        result = run_fifo(trades, [], mock_nbp)
+
+        assert len(result.tax_lots) == 1
+        lot = result.tax_lots[0]
+        assert lot.buy_quantity == Decimal("6")
+        assert lot.sell_quantity == Decimal("6")
+
+        # 4 kontrakty nadal otwarte
+        assert _OPT_SYMBOL in result.open_positions
+        open_lots = result.open_positions[_OPT_SYMBOL]
+        assert len(open_lots) == 1
+        assert open_lots[0].remaining_quantity == Decimal("4")
+
+
+class TestOptionsExpiration:
+    """Testy wygaśnięcia opcji (kod Ep)."""
+
+    @pytest.mark.fifo
+    def test_expiration_buyer_loss(self, mock_nbp: MagicMock):
+        """Buyer: opcja wygasa bezwartościowo → strata = koszt premii."""
+        trades = [
+            _make_option_trade(
+                quantity=5, price="12.90", codes=["O"],
+                trade_date=date(2025, 10, 22), settle_date=date(2025, 10, 23),
+            ),
+            _make_option_trade(
+                quantity=-5, price="0", codes=["Ep"],
+                trade_date=date(2026, 3, 20), settle_date=date(2026, 3, 23),
+            ),
+        ]
+        result = run_fifo(trades, [], mock_nbp)
+
+        assert len(result.tax_lots) == 1
+        lot = result.tax_lots[0]
+
+        # sell_proceeds = 0 × 5 × 100 × 4.0 - commission = (0 - 1) × 4 = -4
+        # Ale sell_proceeds nie może być ujemne... sprawdźmy
+        # sell_amount = 0, sell_proceeds_pln = (0 - 1) × 4 = -4
+        assert lot.sell_proceeds_pln == (Decimal("0") - Decimal("1")) * Decimal("4.0")
+        # buy_cost = (12.90 × 5 × 100 + 1) × 4 = 25804
+        expected_buy = (Decimal("12.90") * 5 * 100 + Decimal("1")) * Decimal("4.0")
+        assert lot.buy_cost_pln == expected_buy
+        # Strata
+        assert lot.profit_loss_pln < 0
+
+    @pytest.mark.fifo
+    def test_expiration_writer_gain(self, mock_nbp: MagicMock):
+        """Writer: opcja wygasa → zysk = otrzymana premia."""
+        trades = [
+            # Sell-to-open (wystawienie opcji)
+            _make_option_trade(
+                quantity=-5, price="12.90", codes=["O"],
+                trade_date=date(2025, 10, 22), settle_date=date(2025, 10, 23),
+            ),
+            # Wygaśnięcie — writer dostaje qty > 0
+            _make_option_trade(
+                quantity=5, price="0", codes=["Ep"],
+                trade_date=date(2026, 3, 20), settle_date=date(2026, 3, 23),
+            ),
+        ]
+        result = run_fifo(trades, [], mock_nbp)
+
+        assert len(result.tax_lots) == 1
+        lot = result.tax_lots[0]
+
+        # Przychód = premia: 12.90 × 5 × 100 = 6450
+        # sell_proceeds_pln = (6450 - |commission|) × 4.0
+        expected_proceeds = (Decimal("12.90") * 5 * 100 - Decimal("1")) * Decimal("4.0")
+        assert lot.sell_proceeds_pln == expected_proceeds
+
+        # Koszt = 0 (wygaśnięcie, cena zamknięcia = 0)
+        # buy_cost_pln = (0 + |commission|) × 4.0
+        expected_cost = (Decimal("0") + Decimal("1")) * Decimal("4.0")
+        assert lot.buy_cost_pln == expected_cost
+
+        # Zysk
+        assert lot.profit_loss_pln > 0
+
+    @pytest.mark.fifo
+    def test_expiration_year_boundary(self, mock_nbp: MagicMock):
+        """Wygaśnięcie w grudniu z settlement w styczniu → tax_year = następny rok."""
+        trades = [
+            _make_option_trade(
+                quantity=5, price="12.90", codes=["O"],
+                trade_date=date(2025, 10, 22), settle_date=date(2025, 10, 23),
+            ),
+            _make_option_trade(
+                quantity=-5, price="0", codes=["Ep"],
+                # Trade date grudzień, settle date styczeń
+                trade_date=date(2025, 12, 31), settle_date=date(2026, 1, 2),
+            ),
+        ]
+        result = run_fifo(trades, [], mock_nbp)
+
+        assert len(result.tax_lots) == 1
+        assert result.tax_lots[0].tax_year == 2026
+
+
+class TestOptionsExercise:
+    """Testy wykonania opcji (exercise, kod Ex)."""
+
+    @pytest.mark.fifo
+    def test_exercise_buyer_call(self, mock_nbp: MagicMock):
+        """Exercise call → lot akcji z cost basis = strike + premium."""
+        trades = [
+            _make_option_trade(
+                quantity=5, price="12.90", codes=["O"],
+                trade_date=date(2025, 10, 22), settle_date=date(2025, 10, 23),
+            ),
+            _make_option_trade(
+                quantity=-5, price="0", codes=["Ex"],
+                trade_date=date(2026, 3, 20), settle_date=date(2026, 3, 23),
+            ),
+        ]
+        result = run_fifo(trades, [], mock_nbp)
+
+        # Brak TaxLot — exercise to nie zdarzenie podatkowe
+        assert len(result.tax_lots) == 0
+
+        # Opcja zamknięta
+        assert _OPT_SYMBOL not in result.open_positions
+
+        # Syntetyczny lot akcji NBIS w otwartych pozycjach
+        assert _OPT_UNDERLYING in result.open_positions
+        stock_lots = result.open_positions[_OPT_UNDERLYING]
+        assert len(stock_lots) == 1
+
+        stock_lot = stock_lots[0]
+        # 5 kontraktów × 100 = 500 akcji
+        assert stock_lot.remaining_quantity == Decimal("500")
+        # Cost basis per share = strike + premium = 150 + 12.90 = 162.90
+        assert stock_lot.price_per_unit == Decimal("162.90")
+
+    @pytest.mark.fifo
+    def test_exercise_then_sell_stock(self, mock_nbp: MagicMock):
+        """Exercise call → sprzedaż akcji → TaxLot z poprawnym cost basis."""
+        trades = [
+            # Kupno opcji
+            _make_option_trade(
+                quantity=5, price="12.90", codes=["O"],
+                trade_date=date(2025, 10, 22), settle_date=date(2025, 10, 23),
+            ),
+            # Exercise
+            _make_option_trade(
+                quantity=-5, price="0", codes=["Ex"],
+                trade_date=date(2026, 3, 20), settle_date=date(2026, 3, 23),
+            ),
+            # Sprzedaż 500 akcji NBIS (po exercise)
+            _make_trade(
+                symbol=_OPT_UNDERLYING, quantity=-500, price="180.00",
+                isin=_OPT_ISIN, listing_exchange="NASDAQ",
+                trade_date=date(2026, 4, 10), settle_date=date(2026, 4, 13),
+            ),
+        ]
+        result = run_fifo(trades, [], mock_nbp)
+
+        # Jeden TaxLot ze sprzedaży akcji
+        assert len(result.tax_lots) == 1
+        lot = result.tax_lots[0]
+        assert lot.symbol == _OPT_UNDERLYING
+
+        # Buy cost basis per share = 162.90 (strike + premium)
+        assert lot.buy_price == Decimal("162.90")
+        # sell_proceeds = 180 × 500 × 1 (stock multiplier) = 90000
+        # buy_cost = 162.90 × 500 × 1 = 81450
+        expected_buy = (Decimal("162.90") * 500 + Decimal("1")) * Decimal("4.0")
+        assert lot.buy_cost_pln == expected_buy
+
+
+class TestOptionsAssignment:
+    """Testy przydzielenia opcji (assignment, kod A)."""
+
+    @pytest.mark.fifo
+    def test_assignment_writer_call(self, mock_nbp: MagicMock):
+        """Writer call assigned → sprzedaż akcji po strike + zysk z premii."""
+        trades = [
+            # Writer sprzedaje akcje NBIS (ma je w portfolio)
+            _make_trade(
+                symbol=_OPT_UNDERLYING, quantity=500, price="140.00",
+                isin=_OPT_ISIN, listing_exchange="NASDAQ",
+                trade_date=date(2025, 6, 10), settle_date=date(2025, 6, 11),
+            ),
+            # Sell-to-open opcji (wystawienie call)
+            _make_option_trade(
+                quantity=-5, price="12.90", codes=["O"],
+                trade_date=date(2025, 10, 22), settle_date=date(2025, 10, 23),
+            ),
+            # Assignment — writer musi sprzedać akcje po strike
+            _make_option_trade(
+                quantity=5, price="0", codes=["A"],
+                trade_date=date(2026, 3, 20), settle_date=date(2026, 3, 23),
+            ),
+        ]
+        result = run_fifo(trades, [], mock_nbp)
+
+        # Dwa TaxLoty: jeden z premii opcyjnej, jeden ze sprzedaży akcji
+        assert len(result.tax_lots) == 2
+
+        # TaxLot 1: premia opcyjna (short close)
+        option_lot = [t for t in result.tax_lots if t.asset_category == AssetCategory.OPTIONS][0]
+        # Przychód = premia: 12.90 × 5 × 100 = 6450
+        assert option_lot.profit_loss_pln > 0  # zysk z premii
+
+        # TaxLot 2: sprzedaż akcji po strike
+        stock_lot = [t for t in result.tax_lots if t.asset_category != AssetCategory.OPTIONS][0]
+        assert stock_lot.symbol == _OPT_UNDERLYING
+        # Sprzedaż po strike 150, kupno po 140 → zysk
+        assert stock_lot.sell_price == Decimal("150.00")
+        assert stock_lot.buy_price == Decimal("140.00")
+
+
+class TestOptionsShortBasket:
+    """Testy krótkiej pozycji opcyjnej (sell-to-open / buy-to-close)."""
+
+    @pytest.mark.fifo
+    def test_short_option_buy_to_close(self, mock_nbp: MagicMock):
+        """Sell-to-open @12.90, buy-to-close @8.00 → zysk."""
+        trades = [
+            _make_option_trade(
+                quantity=-5, price="12.90", codes=["O"],
+                trade_date=date(2025, 10, 22), settle_date=date(2025, 10, 23),
+            ),
+            _make_option_trade(
+                quantity=5, price="8.00", codes=["C"],
+                trade_date=date(2025, 11, 15), settle_date=date(2025, 11, 18),
+            ),
+        ]
+        result = run_fifo(trades, [], mock_nbp)
+
+        assert len(result.tax_lots) == 1
+        lot = result.tax_lots[0]
+
+        # Przychód = premia: (12.90 × 5 × 100 - 1) × 4 = 25796
+        expected_proceeds = (Decimal("12.90") * 5 * 100 - Decimal("1")) * Decimal("4.0")
+        assert lot.sell_proceeds_pln == expected_proceeds
+
+        # Koszt = zamknięcie: (8.00 × 5 × 100 + 1) × 4 = 16004
+        expected_cost = (Decimal("8.00") * 5 * 100 + Decimal("1")) * Decimal("4.0")
+        assert lot.buy_cost_pln == expected_cost
+
+        # Zysk = proceeds - cost
+        assert lot.profit_loss_pln == expected_proceeds - expected_cost
+        assert lot.profit_loss_pln > 0

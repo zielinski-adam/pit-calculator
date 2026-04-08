@@ -39,9 +39,12 @@ class Trade(BaseModel):
     # Opcje
     multiplier: int = 1            # 1 dla akcji, 100 dla opcji
     underlying: str | None = None  # symbol underlying (np. "NBIS" dla opcji NBIS 20MAR26 150 C)
+    expiry: date | None = None     # data wygaśnięcia opcji
+    strike: Decimal | None = None  # cena strike opcji
+    option_type: str | None = None # "C" (call) lub "P" (put)
 
     # Metadane
-    codes: list[str] = []          # kody IBKR: O, C, P, IA, IM itp.
+    codes: list[str] = []          # kody IBKR: O, C, P, Ep, Ex, A itp.
 
     @field_validator("quantity", "price", "proceeds", "commission", mode="before")
     @classmethod
@@ -69,9 +72,25 @@ class Trade(BaseModel):
         return self.asset_category == AssetCategory.OPTIONS
 
     @property
+    def is_expiration(self) -> bool:
+        """Czy trade to wygaśnięcie opcji (kod Ep)."""
+        return "Ep" in self.codes
+
+    @property
+    def is_exercise(self) -> bool:
+        """Czy trade to wykonanie opcji (kod Ex)."""
+        return "Ex" in self.codes
+
+    @property
+    def is_assignment(self) -> bool:
+        """Czy trade to przydzielenie opcji (kod A)."""
+        return "A" in self.codes
+
+    @property
     def country(self) -> str:
-        """Kraj z prefiksu ISIN (pierwsze 2 znaki) -- dla PIT/ZG."""
-        return self.isin[:2] if len(self.isin) >= 2 else "XX"
+        """Kraj giełdy (z listing_exchange) -- dla PIT/ZG."""
+        from .exchange import EXCHANGE_COUNTRY
+        return EXCHANGE_COUNTRY.get(self.listing_exchange, self.isin[:2])
 
     @property
     def tax_year(self) -> int | None:
@@ -103,5 +122,6 @@ class InstrumentInfo(BaseModel):
 
     @property
     def country(self) -> str:
-        """Kraj z prefiksu ISIN."""
-        return self.isin[:2] if len(self.isin) >= 2 else "XX"
+        """Kraj giełdy (z listing_exchange) -- dla PIT/ZG."""
+        from .exchange import EXCHANGE_COUNTRY
+        return EXCHANGE_COUNTRY.get(self.listing_exchange, self.isin[:2])

@@ -76,6 +76,97 @@ class IBKRParseResult:
         return [w for w in self.withholding_taxes if w.wht_type == WhtType.DIVIDEND_WHT]
 
 
+def _trade_dedup_key(trade: Trade) -> tuple:
+    """Klucz deduplikacji transakcji (IBKR CSV nie ma unikalnego ID)."""
+    return (trade.symbol, trade.trade_datetime, trade.quantity, trade.price, trade.commission)
+
+
+def _dividend_dedup_key(d: Dividend) -> tuple:
+    """Klucz deduplikacji dywidendy."""
+    return (d.symbol, d.isin, d.payment_date, d.amount, d.currency, d.dividend_type)
+
+
+def _wht_dedup_key(w: WithholdingTax) -> tuple:
+    """Klucz deduplikacji WHT."""
+    return (w.currency, w.payment_date, w.amount, w.description)
+
+
+def _ca_dedup_key(ca: CorporateAction) -> tuple:
+    """Klucz deduplikacji corporate action."""
+    return (ca.symbol, ca.isin, ca.action_date, ca.action_type, ca.quantity)
+
+
+def merge_ibkr_results(results: list[IBKRParseResult]) -> IBKRParseResult:
+    """Merguj wyniki z wielu plików CSV z deduplikacją."""
+    if len(results) == 1:
+        return results[0]
+
+    merged = IBKRParseResult()
+
+    # Metadane z pierwszego pliku
+    first = results[0]
+    merged.account_name = first.account_name
+    merged.account_id = first.account_id
+    merged.base_currency = first.base_currency
+    merged.period = f"{first.period} (merged, {len(results)} plików)"
+
+    # Deduplikacja trades
+    seen_trades: set[tuple] = set()
+    for r in results:
+        for t in r.trades:
+            key = _trade_dedup_key(t)
+            if key not in seen_trades:
+                seen_trades.add(key)
+                merged.trades.append(t)
+
+    # Deduplikacja dywidend
+    seen_divs: set[tuple] = set()
+    for r in results:
+        for d in r.dividends:
+            key = _dividend_dedup_key(d)
+            if key not in seen_divs:
+                seen_divs.add(key)
+                merged.dividends.append(d)
+
+    # Deduplikacja WHT
+    seen_whts: set[tuple] = set()
+    for r in results:
+        for w in r.withholding_taxes:
+            key = _wht_dedup_key(w)
+            if key not in seen_whts:
+                seen_whts.add(key)
+                merged.withholding_taxes.append(w)
+
+    # Deduplikacja corporate actions
+    seen_cas: set[tuple] = set()
+    for r in results:
+        for ca in r.corporate_actions:
+            key = _ca_dedup_key(ca)
+            if key not in seen_cas:
+                seen_cas.add(key)
+                merged.corporate_actions.append(ca)
+
+    # Merge instruments (późniejsze pliki nadpisują)
+    for r in results:
+        merged.instruments.update(r.instruments)
+
+    # Sortuj trades chronologicznie
+    merged.trades.sort(key=lambda t: t.trade_datetime)
+
+    logger.info(
+        f"Zmergowano {len(results)} plików: "
+        f"{len(merged.trades)} transakcji (z {sum(len(r.trades) for r in results)} łącznie)"
+    )
+
+    return merged
+
+
+def parse_ibkr_csvs(file_paths: list[Path]) -> IBKRParseResult:
+    """Parsuj wiele plików CSV i zmerguj wyniki z deduplikacją."""
+    results = [parse_ibkr_csv(fp) for fp in file_paths]
+    return merge_ibkr_results(results)
+
+
 def _parse_decimal(value: str) -> Decimal:
     """Parsuj string na Decimal, obsługując przecinki w liczbach (np. '1,000')."""
     try:
@@ -105,37 +196,48 @@ def _enrich_trade_with_instrument(
     trade_symbol: str,
     trade_asset_category: str,
     instruments: dict[str, InstrumentInfo],
-) -> tuple[str, str, int, str | None]:
+) -> tuple[str, str, int, str | None, date | None, Decimal | None, str | None]:
     """
     Wzbogacenie trade'a o dane z Financial Instrument Information.
 
-    Zwraca: (isin, listing_exchange, multiplier, underlying)
+    Zwraca: (isin, listing_exchange, multiplier, underlying, expiry, strike, option_type)
     """
+    def _result(info: InstrumentInfo) -> tuple[str, str, int, str | None, date | None, Decimal | None, str | None]:
+        return info.isin, info.listing_exchange, info.multiplier, info.underlying, info.expiry, info.strike, info.option_type
+
     # Szukaj po symbolu z Trades (dla opcji: "NBIS 20MAR26 150 C")
     # W FII opcje mają inny format symbolu (np. "NBIS  260320C00150000")
     # Szukamy po opisie (Description) który jest taki sam jak symbol w Trades
     for info in instruments.values():
         if info.description == trade_symbol or info.symbol == trade_symbol:
-            return info.isin, info.listing_exchange, info.multiplier, info.underlying
+            return _result(info)
 
     # Fallback: szukaj po pierwszym słowie (underlying) dla opcji
     if trade_asset_category == AssetCategory.OPTIONS:
         underlying = trade_symbol.split()[0] if " " in trade_symbol else trade_symbol
         for info in instruments.values():
             if info.underlying == underlying and info.asset_category == AssetCategory.OPTIONS:
-                return info.isin, info.listing_exchange, info.multiplier, info.underlying
+                return _result(info)
         # Jeśli nie znaleziono opcji, spróbuj underlying jako stock
         if underlying in instruments:
             stock_info = instruments[underlying]
-            return stock_info.isin, "CBOE", 100, underlying
+            return stock_info.isin, "CBOE", 100, underlying, None, None, None
 
     # Szukaj bezpośrednio po kluczu
     if trade_symbol in instruments:
         info = instruments[trade_symbol]
-        return info.isin, info.listing_exchange, info.multiplier, info.underlying
+        return _result(info)
+
+    # Fallback dla Treasury Bills: symbol w Trades ma suffix z oprocentowaniem
+    # np. "912797KJ5 4.30699928%" → szukaj po "912797KJ5"
+    if trade_asset_category == AssetCategory.TREASURY_BILLS:
+        cusip = trade_symbol.split()[0] if " " in trade_symbol else trade_symbol
+        if cusip in instruments:
+            info = instruments[cusip]
+            return _result(info)
 
     logger.warning(f"Brak danych instrumentu dla symbolu: {trade_symbol}")
-    return "UNKNOWN", "UNKNOWN", 1, None
+    return "UNKNOWN", "UNKNOWN", 1, None, None, None, None
 
 
 def parse_ibkr_csv(file_path: str | Path) -> IBKRParseResult:
@@ -290,13 +392,19 @@ def _parse_financial_instruments(content: str, result: IBKRParseResult) -> None:
                     pass
             option_type = field_map.get("Type", None)
 
+        # Listing Exch: dla Treasury Bills IBKR wstawia "BILL" w pole Underlying,
+        # a Listing Exch jest puste -- naprawiamy tutaj
+        listing_exch = field_map.get("Listing Exch", "").strip()
+        if not listing_exch and asset_cat == AssetCategory.TREASURY_BILLS:
+            listing_exch = "BILL"
+
         info = InstrumentInfo(
             asset_category=asset_cat,
             symbol=symbol,
             description=description,
             conid=conid,
             isin=isin if isin else (f"OPT-{conid}" if conid else "UNKNOWN"),
-            listing_exchange=field_map.get("Listing Exch", "UNKNOWN"),
+            listing_exchange=listing_exch or "UNKNOWN",
             multiplier=multiplier,
             underlying=underlying,
             instrument_type=field_map.get("Type", ""),
@@ -382,8 +490,8 @@ def _parse_trade_row(row: list[str], result: IBKRParseResult) -> None:
         return
 
     # Wzbogać o dane z Financial Instrument Information
-    isin, listing_exchange, multiplier, underlying = _enrich_trade_with_instrument(
-        symbol, asset_category_str, result.instruments
+    isin, listing_exchange, multiplier, underlying, expiry, strike, option_type = (
+        _enrich_trade_with_instrument(symbol, asset_category_str, result.instruments)
     )
 
     trade = Trade(
@@ -400,6 +508,9 @@ def _parse_trade_row(row: list[str], result: IBKRParseResult) -> None:
         commission=_parse_decimal(commission_str),
         multiplier=multiplier,
         underlying=underlying,
+        expiry=expiry,
+        strike=strike,
+        option_type=option_type,
         codes=_parse_codes(code_str),
     )
 
