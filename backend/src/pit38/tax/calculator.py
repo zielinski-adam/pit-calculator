@@ -229,7 +229,7 @@ def _calculate_pit_zg(tax_lots: list[TaxLot]) -> list[PitZgEntry]:
     """
     PIT/ZG -- załącznik per kraj.
 
-    Kraj = prefiks ISIN (2 znaki), NIE kraj giełdy.
+    Kraj = kraj giełdy (listing_exchange), NIE prefiks ISIN.
     Tylko zyski kapitałowe (sekcja C), NIE dywidendy.
     """
     # Grupuj po kraju

@@ -8,7 +8,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import { ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowUp, ArrowDown, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "./button";
 
@@ -46,18 +46,41 @@ export function DataTable<TData>({
                 {headerGroup.headers.map((header) => (
                   <th
                     key={header.id}
+                    scope="col"
                     className={cn(
                       "px-3 py-2 text-left font-medium text-muted-foreground",
                       header.column.getCanSort() && "cursor-pointer select-none"
                     )}
-                    onClick={header.column.getToggleSortingHandler()}
+                    {...(header.column.getCanSort()
+                      ? {
+                          role: "button" as const,
+                          tabIndex: 0,
+                          "aria-sort": header.column.getIsSorted() === "asc"
+                            ? ("ascending" as const)
+                            : header.column.getIsSorted() === "desc"
+                              ? ("descending" as const)
+                              : ("none" as const),
+                          onClick: header.column.getToggleSortingHandler(),
+                          onKeyDown: (e: React.KeyboardEvent) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              header.column.getToggleSortingHandler()?.(e);
+                            }
+                          },
+                        }
+                      : { onClick: header.column.getToggleSortingHandler() }
+                    )}
                   >
                     <div className="flex items-center gap-1">
                       {header.isPlaceholder
                         ? null
                         : flexRender(header.column.columnDef.header, header.getContext())}
                       {header.column.getCanSort() && (
-                        <ArrowUpDown className="h-3 w-3" />
+                        header.column.getIsSorted() === "asc"
+                          ? <ArrowUp className="h-3 w-3" />
+                          : header.column.getIsSorted() === "desc"
+                            ? <ArrowDown className="h-3 w-3" />
+                            : <ArrowUpDown className="h-3 w-3 opacity-50" />
                       )}
                     </div>
                   </th>
@@ -96,17 +119,19 @@ export function DataTable<TData>({
             <Button
               variant="outline"
               size="sm"
+              aria-label="Poprzednia strona"
               onClick={() => table.previousPage()}
               disabled={!table.getCanPreviousPage()}
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
-            <span className="text-sm">
+            <span className="text-sm" aria-live="polite">
               {table.getState().pagination.pageIndex + 1} / {table.getPageCount()}
             </span>
             <Button
               variant="outline"
               size="sm"
+              aria-label="Następna strona"
               onClick={() => table.nextPage()}
               disabled={!table.getCanNextPage()}
             >

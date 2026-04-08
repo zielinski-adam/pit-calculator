@@ -14,6 +14,7 @@ class ListingExchange(StrEnum):
     CBOE = "CBOE"        # Opcje US
     ARCA = "ARCA"        # NYSE ARCA
     LSE = "LSE"          # London Stock Exchange
+    BILL = "BILL"        # US Treasury Bills (rozliczenie T+1, kalendarz US)
 
 
 # Data reformy T+1 w USA (SEC Rule 15c6-1)
@@ -36,6 +37,7 @@ class ExchangeConfig:
             ListingExchange.NYSE,
             ListingExchange.ARCA,
             ListingExchange.CBOE,
+            ListingExchange.BILL,
         }:
             return 1 if trade_date >= US_T1_REFORM_DATE else 2
         elif self.listing_exchange == ListingExchange.AEB:
@@ -54,6 +56,21 @@ EXCHANGE_MAP: dict[str, ExchangeConfig] = {
     "CBOE": ExchangeConfig(ListingExchange.CBOE, "XNYS"),  # OCC = US settlement
     "ARCA": ExchangeConfig(ListingExchange.ARCA, "ARCX"),
     "LSE": ExchangeConfig(ListingExchange.LSE, "XLON"),
+    "LSEETF": ExchangeConfig(ListingExchange.LSE, "XLON"),  # ETF-y na LSE
+    "BILL": ExchangeConfig(ListingExchange.BILL, "XNYS"),  # T-bills: kalendarz US
+}
+
+
+# Mapowanie giełda IBKR → kod kraju ISO 3166-1 alpha-2 (dla PIT/ZG)
+EXCHANGE_COUNTRY: dict[str, str] = {
+    "NASDAQ": "US",
+    "NYSE": "US",
+    "ARCA": "US",
+    "CBOE": "US",
+    "BILL": "US",
+    "AEB": "NL",
+    "LSE": "GB",
+    "LSEETF": "GB",
 }
 
 

@@ -63,24 +63,33 @@ class TestFinancialInstruments:
         assert opt.multiplier == 100
         assert opt.listing_exchange == "CBOE"
 
-    def test_country_from_isin(self, parsed):
-        """Kraj z prefiksu ISIN: IWDA → IE, AAPL → US, JOBY → KY."""
-        # IWDA jest irlandzki
+    def test_country_from_exchange(self, parsed):
+        """Kraj z giełdy: IWDA (AEB) → NL, JOBY (NYSE) → US."""
+        # IWDA notowany na AEB (Euronext Amsterdam) → kraj NL
         iwda = parsed.instruments.get("IWDA")
         assert iwda is not None
-        assert iwda.country == "IE"
+        assert iwda.country == "NL"
 
-        # JOBY jest na Kajmanach (KYG651631007)
+        # JOBY notowany na NYSE → kraj US (nie KY z ISIN)
         joby = parsed.instruments.get("JOBY")
         assert joby is not None
-        assert joby.country == "KY"
+        assert joby.country == "US"
 
-    def test_nbis_is_dutch(self, parsed):
-        """NBIS (Nebius) ma ISIN NL0009805522 → kraj NL (Holandia)."""
+    def test_nbis_on_nasdaq(self, parsed):
+        """NBIS (Nebius) ma ISIN NL0009805522 ale notowany na NASDAQ → kraj US."""
         nbis = parsed.instruments.get("NBIS")
         assert nbis is not None
         assert nbis.isin == "NL0009805522"
-        assert nbis.country == "NL"
+        assert nbis.listing_exchange == "NASDAQ"
+        assert nbis.country == "US"  # kraj giełdy, nie ISIN
+
+    def test_treasury_bill_parsed(self, parsed):
+        """Treasury Bill (912797KJ5) powinien być sparsowany."""
+        tbill = parsed.instruments.get("912797KJ5")
+        assert tbill is not None
+        assert tbill.asset_category == AssetCategory.TREASURY_BILLS
+        assert tbill.isin == "US912797KJ59"
+        assert tbill.listing_exchange == "BILL"
 
 
 class TestTrades:
@@ -153,10 +162,19 @@ class TestTrades:
             assert isinstance(trade.commission, Decimal)
 
     def test_trade_country(self, parsed):
-        """Trade.country pochodzi z prefiksu ISIN."""
+        """Trade.country pochodzi z giełdy (listing_exchange)."""
         iwda_trades = [t for t in parsed.trades if t.symbol == "IWDA"]
         if iwda_trades:
-            assert iwda_trades[0].country == "IE"
+            assert iwda_trades[0].country == "NL"  # AEB → NL
+
+    def test_treasury_bill_trade(self, parsed):
+        """Transakcja Treasury Bill powinna być sparsowana."""
+        tbill_trades = [t for t in parsed.trades if t.asset_category == AssetCategory.TREASURY_BILLS]
+        assert len(tbill_trades) >= 1
+        t = tbill_trades[0]
+        assert t.isin == "US912797KJ59"
+        assert t.listing_exchange == "BILL"
+        assert isinstance(t.quantity, Decimal)
 
     def test_option_trade_has_cboe(self, parsed):
         """Opcje powinny mieć listing_exchange CBOE."""

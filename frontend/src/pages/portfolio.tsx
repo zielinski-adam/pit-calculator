@@ -3,11 +3,12 @@ import { DataTable } from "@/components/ui/data-table";
 import { useAppStore } from "@/stores/app-store";
 import type { OpenPosition } from "@/lib/api-types";
 import { fmtPLN, fmtDate, fmtQty } from "@/lib/format";
+import { numericSort } from "@/lib/sorting";
 
 const columns: ColumnDef<OpenPosition, unknown>[] = [
   { accessorKey: "symbol", header: "Symbol" },
-  { accessorKey: "remaining_quantity", header: "Ilość", cell: ({ getValue }) => fmtQty(getValue() as string) },
-  { accessorKey: "price_per_unit", header: "Cena (avg)", cell: ({ getValue }) => fmtPLN(getValue() as string, 4) },
+  { accessorKey: "remaining_quantity", header: "Ilość", sortingFn: numericSort, cell: ({ getValue }) => fmtQty(getValue() as string) },
+  { accessorKey: "price_per_unit", header: "Cena (avg)", sortingFn: numericSort, cell: ({ getValue }) => fmtPLN(getValue() as string, 4) },
   { accessorKey: "currency", header: "Waluta", size: 60 },
   { accessorKey: "trade_date", header: "Data kupna", cell: ({ getValue }) => fmtDate(getValue() as string) },
   { accessorKey: "settle_date", header: "Data rozliczenia", cell: ({ getValue }) => fmtDate(getValue() as string | null) },

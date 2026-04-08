@@ -22,7 +22,7 @@ from pit38.api.schemas import (
 )
 from pit38.fifo import run_fifo
 from pit38.nbp import NBPClient
-from pit38.parsers.ibkr_csv import parse_ibkr_csv
+from pit38.parsers.ibkr_csv import parse_ibkr_csv, merge_ibkr_results
 from pit38.settlement import enrich_trades_with_settlement
 from pit38.tax import calculate_pit38
 
@@ -41,7 +41,7 @@ def health_check() -> HealthResponse:
     responses={400: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
 )
 def calculate(
-    file: UploadFile = File(..., description="IBKR Activity Statement CSV"),
+    files: list[UploadFile] = File(..., description="IBKR Activity Statement CSV (jeden lub więcej)"),
     tax_year: int = Form(..., description="Rok podatkowy", ge=2020, le=2030),
     prior_losses: Decimal = Form(
         default=Decimal("0"),
@@ -53,21 +53,31 @@ def calculate(
     Oblicz PIT-38 na podstawie IBKR Activity Statement CSV.
 
     Pełny pipeline: CSV → parser → settlement → FIFO → tax calculator → raport.
+    Obsługuje wiele plików CSV (np. roczne eksporty z IBKR).
     """
-    # Walidacja typu pliku
-    if file.filename and not file.filename.lower().endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Wymagany plik CSV")
+    if not files:
+        raise HTTPException(status_code=400, detail="Wymagany co najmniej jeden plik CSV")
 
-    # Zapisz upload do pliku tymczasowego
+    tmp_paths: list[Path] = []
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="wb", suffix=".csv", delete=False
-        ) as tmp:
-            content = file.file.read()
-            if not content:
-                raise HTTPException(status_code=400, detail="Pusty plik")
-            tmp.write(content)
-            tmp_path = Path(tmp.name)
+        for f in files:
+            # Walidacja typu pliku
+            if f.filename and not f.filename.lower().endswith(".csv"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Wymagany plik CSV: {f.filename}",
+                )
+            with tempfile.NamedTemporaryFile(
+                mode="wb", suffix=".csv", delete=False
+            ) as tmp:
+                content = f.file.read()
+                if not content:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Pusty plik: {f.filename}",
+                    )
+                tmp.write(content)
+                tmp_paths.append(Path(tmp.name))
     except HTTPException:
         raise
     except Exception as e:
@@ -75,24 +85,25 @@ def calculate(
         raise HTTPException(status_code=400, detail=f"Błąd odczytu pliku: {e}")
 
     try:
-        return _run_pipeline(tmp_path, tax_year, prior_losses)
+        return _run_pipeline(tmp_paths, tax_year, prior_losses)
     finally:
-        # Usuń plik tymczasowy
-        try:
-            tmp_path.unlink()
-        except OSError:
-            pass
+        for p in tmp_paths:
+            try:
+                p.unlink()
+            except OSError:
+                pass
 
 
 def _run_pipeline(
-    csv_path: Path,
+    csv_paths: list[Path],
     tax_year: int,
     prior_losses: Decimal,
 ) -> CalculateResponse:
     """Uruchom pełny pipeline kalkulacji."""
-    # 1. Parsuj CSV
+    # 1. Parsuj CSV (jeden lub wiele plików z deduplikacją)
     try:
-        parsed = parse_ibkr_csv(csv_path)
+        results = [parse_ibkr_csv(p) for p in csv_paths]
+        parsed = merge_ibkr_results(results) if len(results) > 1 else results[0]
     except Exception as e:
         logger.error(f"Błąd parsowania CSV: {e}")
         raise HTTPException(status_code=400, detail=f"Błąd parsowania CSV: {e}")

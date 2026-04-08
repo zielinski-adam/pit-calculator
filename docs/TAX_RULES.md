@@ -47,7 +47,7 @@
 ### PIT/ZG -- Załącznik per kraj
 
 Wypełniany osobno dla każdego kraju, z którego uzyskano zyski kapitałowe (sekcja C).
-Kraj identyfikowany z prefiksu ISIN (np. US = Stany Zjednoczone, IE = Irlandia, NL = Holandia).
+Kraj identyfikowany z giełdy (listing_exchange), np. NYSE/NASDAQ = US, AEB = NL, LSE = GB.
 
 | Pozycja | Nazwa |
 |---------|-------|
@@ -56,7 +56,7 @@ Kraj identyfikowany z prefiksu ISIN (np. US = Stany Zjednoczone, IE = Irlandia, 
 | poz. 30 | Podatek od innych przychodów zapłacony za granicą |
 
 **Uwaga o ISIN vs giełda**: JOBY (KYG651631007) jest zarejestrowany na Kajmanach (KY) ale notowany na NYSE.
-Kraj PIT/ZG = kraj z ISIN (KY), NIE kraj giełdy (US). To jest spójne z podatekgieldowy.pl.
+Kraj PIT/ZG = kraj giełdy (US), NIE prefiks ISIN (KY). Źródło: inwestomat.eu -- "jeden PIT/ZG dla kraju każdej giełdy".
 
 ## 2. Stawki WHT (Withholding Tax) na dywidendy
 

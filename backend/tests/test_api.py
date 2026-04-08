@@ -42,14 +42,14 @@ class TestCalculateValidation:
         csv_content = b"dummy,csv,content"
         resp = client.post(
             "/api/calculate",
-            files={"file": ("test.csv", io.BytesIO(csv_content), "text/csv")},
+            files=[("files", ("test.csv", io.BytesIO(csv_content), "text/csv"))],
         )
         assert resp.status_code == 422
 
     def test_invalid_file_extension(self, client: TestClient) -> None:
         resp = client.post(
             "/api/calculate",
-            files={"file": ("test.txt", io.BytesIO(b"data"), "text/plain")},
+            files=[("files", ("test.txt", io.BytesIO(b"data"), "text/plain"))],
             data={"tax_year": 2025},
         )
         assert resp.status_code == 400
@@ -58,7 +58,7 @@ class TestCalculateValidation:
     def test_empty_file(self, client: TestClient) -> None:
         resp = client.post(
             "/api/calculate",
-            files={"file": ("test.csv", io.BytesIO(b""), "text/csv")},
+            files=[("files", ("test.csv", io.BytesIO(b""), "text/csv"))],
             data={"tax_year": 2025},
         )
         assert resp.status_code == 400
@@ -67,7 +67,7 @@ class TestCalculateValidation:
         csv_content = b"dummy,csv,content"
         resp = client.post(
             "/api/calculate",
-            files={"file": ("test.csv", io.BytesIO(csv_content), "text/csv")},
+            files=[("files", ("test.csv", io.BytesIO(csv_content), "text/csv"))],
             data={"tax_year": 2019},
         )
         assert resp.status_code == 422
@@ -81,7 +81,7 @@ class TestCalculateWithMinimalCSV:
         csv_content = b"Statement,Data,Title,Activity Statement\n"
         resp = client.post(
             "/api/calculate",
-            files={"file": ("empty.csv", io.BytesIO(csv_content), "text/csv")},
+            files=[("files", ("empty.csv", io.BytesIO(csv_content), "text/csv"))],
             data={"tax_year": 2025},
         )
         assert resp.status_code == 200
@@ -98,7 +98,7 @@ class TestCalculateWithMinimalCSV:
         csv_content = b"Statement,Data,Title,Activity Statement\n"
         resp = client.post(
             "/api/calculate",
-            files={"file": ("empty.csv", io.BytesIO(csv_content), "text/csv")},
+            files=[("files", ("empty.csv", io.BytesIO(csv_content), "text/csv"))],
             data={"tax_year": 2025, "prior_losses": "1000.50"},
         )
         assert resp.status_code == 200
@@ -120,7 +120,7 @@ class TestCalculateWithRealCSV:
         """Pełny pipeline na prawdziwych danych."""
         resp = client.post(
             "/api/calculate",
-            files={"file": ("statement.csv", io.BytesIO(real_csv_bytes), "text/csv")},
+            files=[("files", ("statement.csv", io.BytesIO(real_csv_bytes), "text/csv"))],
             data={"tax_year": 2025},
         )
         assert resp.status_code == 200
@@ -137,7 +137,7 @@ class TestCalculateWithRealCSV:
         """Odpowiedź zawiera wszystkie pola PIT-38."""
         resp = client.post(
             "/api/calculate",
-            files={"file": ("statement.csv", io.BytesIO(real_csv_bytes), "text/csv")},
+            files=[("files", ("statement.csv", io.BytesIO(real_csv_bytes), "text/csv"))],
             data={"tax_year": 2025},
         )
         assert resp.status_code == 200

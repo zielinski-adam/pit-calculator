@@ -9,14 +9,14 @@ export function useCalculate() {
 
   return useMutation({
     mutationFn: ({
-      file,
+      files,
       taxYear,
       priorLosses,
     }: {
-      file: File;
+      files: File[];
       taxYear: number;
       priorLosses: string;
-    }) => calculatePit38(file, taxYear, priorLosses),
+    }) => calculatePit38(files, taxYear, priorLosses),
 
     onMutate: () => {
       setIsCalculating(true);

@@ -18,8 +18,18 @@ async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let detail = `HTTP ${response.status}`;
     try {
-      const body = (await response.json()) as ErrorResponse;
-      detail = body.detail || detail;
+      const body = await response.json();
+      const d = body?.detail;
+      if (typeof d === "string") {
+        detail = d;
+      } else if (Array.isArray(d)) {
+        // FastAPI validation errors: [{loc, msg, type}, ...]
+        detail = d.map((e: { msg?: string; loc?: string[] }) =>
+          e.msg ? `${(e.loc ?? []).join(".")}: ${e.msg}` : JSON.stringify(e)
+        ).join("; ");
+      } else if (d) {
+        detail = JSON.stringify(d);
+      }
     } catch {
       // ignoruj błędy parsowania
     }
@@ -34,14 +44,16 @@ export async function fetchHealth(): Promise<HealthResponse> {
   return handleResponse<HealthResponse>(response);
 }
 
-/** Oblicz PIT-38 z pliku CSV. */
+/** Oblicz PIT-38 z plików CSV. */
 export async function calculatePit38(
-  file: File,
+  files: File[],
   taxYear: number,
   priorLosses: string = "0"
 ): Promise<CalculateResponse> {
   const formData = new FormData();
-  formData.append("file", file);
+  for (const f of files) {
+    formData.append("files", f);
+  }
   formData.append("tax_year", String(taxYear));
   formData.append("prior_losses", priorLosses);
 

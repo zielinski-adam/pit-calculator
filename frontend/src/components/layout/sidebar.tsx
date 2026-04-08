@@ -34,30 +34,34 @@ export function Sidebar() {
         <p className="text-xs text-muted-foreground">Kalkulator IBKR</p>
       </div>
 
-      <nav className="flex-1 space-y-1 px-2">
-        {navItems.map(({ to, label, icon: Icon }) => {
-          const isActive = matchRoute({ to, fuzzy: to !== "/" });
-          const isDisabled = to !== "/" && !result;
+      <nav className="flex-1 px-2" aria-label="Menu główne">
+        <ul className="space-y-1">
+          {navItems.map(({ to, label, icon: Icon }) => {
+            const isActive = matchRoute({ to, fuzzy: to !== "/" });
+            const isDisabled = to !== "/" && !result;
 
-          return (
-            <Link
-              key={to}
-              to={to}
-              disabled={isDisabled}
-              className={cn(
-                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                isActive
-                  ? "bg-primary text-primary-foreground"
-                  : isDisabled
-                    ? "cursor-not-allowed text-muted-foreground/50"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-              )}
-            >
-              <Icon className="h-4 w-4" />
-              {label}
-            </Link>
-          );
-        })}
+            return (
+              <li key={to}>
+                <Link
+                  to={to}
+                  disabled={isDisabled}
+                  aria-current={isActive ? "page" : undefined}
+                  className={cn(
+                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                    isActive
+                      ? "bg-primary text-primary-foreground"
+                      : isDisabled
+                        ? "cursor-not-allowed text-muted-foreground/50"
+                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                  {label}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
       </nav>
 
       {result && (

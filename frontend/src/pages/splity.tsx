@@ -3,6 +3,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { useAppStore } from "@/stores/app-store";
 import type { CorporateActionEntry } from "@/lib/api-types";
 import { fmtDate, fmtQty } from "@/lib/format";
+import { numericSort } from "@/lib/sorting";
 
 const columns: ColumnDef<CorporateActionEntry, unknown>[] = [
   { accessorKey: "symbol", header: "Symbol" },
@@ -18,7 +19,7 @@ const columns: ColumnDef<CorporateActionEntry, unknown>[] = [
       return from && to ? `${to}:${from}` : "—";
     },
   },
-  { accessorKey: "quantity", header: "Zmiana ilości", cell: ({ getValue }) => fmtQty(getValue() as string) },
+  { accessorKey: "quantity", header: "Zmiana ilości", sortingFn: numericSort, cell: ({ getValue }) => fmtQty(getValue() as string) },
   { accessorKey: "description", header: "Opis" },
 ];
 

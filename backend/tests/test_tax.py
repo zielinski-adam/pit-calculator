@@ -326,24 +326,26 @@ class TestPitZG:
         assert us.capital_gains_income > 0
 
     def test_multiple_countries(self, mock_nbp: MagicMock):
-        """Wiele krajów → osobny PIT/ZG per kraj."""
+        """Wiele krajów (giełd) → osobny PIT/ZG per kraj."""
         lots = [
             _make_tax_lot(country="US", isin="US0378331005",
                           buy_cost_pln="10000", sell_proceeds_pln="15000"),
-            _make_tax_lot(country="IE", isin="IE00B4L5Y983", symbol="IWDA",
+            _make_tax_lot(country="NL", isin="IE00B4L5Y983", symbol="IWDA",
+                          listing_exchange="AEB",
                           buy_cost_pln="20000", sell_proceeds_pln="22000"),
-            _make_tax_lot(country="KY", isin="KYG651631007", symbol="JOBY",
+            _make_tax_lot(country="GB", isin="GB00B03MLX29", symbol="RR.",
+                          listing_exchange="LSE",
                           buy_cost_pln="5000", sell_proceeds_pln="3000"),
         ]
         report = calculate_pit38(lots, [], [], mock_nbp, 2025)
 
         assert len(report.pit_zg_entries) == 3
         countries = {e.country_code for e in report.pit_zg_entries}
-        assert countries == {"US", "IE", "KY"}
+        assert countries == {"US", "NL", "GB"}
 
-        # KY ma stratę → capital_gains_income = 0
-        ky = next(e for e in report.pit_zg_entries if e.country_code == "KY")
-        assert ky.capital_gains_income == Decimal("0")
+        # GB ma stratę → capital_gains_income = 0
+        gb = next(e for e in report.pit_zg_entries if e.country_code == "GB")
+        assert gb.capital_gains_income == Decimal("0")
 
         # US ma zysk
         us = next(e for e in report.pit_zg_entries if e.country_code == "US")

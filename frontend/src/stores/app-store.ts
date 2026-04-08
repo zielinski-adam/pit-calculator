@@ -4,9 +4,9 @@ import { create } from "zustand";
 import type { CalculateResponse } from "@/lib/api-types";
 
 interface AppState {
-  // Plik CSV
-  file: File | null;
-  setFile: (file: File | null) => void;
+  // Pliki CSV (IBKR pozwala max 365 dni -- użytkownik może wgrać kilka)
+  files: File[];
+  setFiles: (files: File[]) => void;
 
   // Parametry kalkulacji
   taxYear: number;
@@ -31,8 +31,8 @@ interface AppState {
 const currentYear = new Date().getFullYear() - 1; // Domyślnie poprzedni rok
 
 export const useAppStore = create<AppState>((set) => ({
-  file: null,
-  setFile: (file) => set({ file, result: null, error: null }),
+  files: [],
+  setFiles: (files) => set({ files, result: null, error: null }),
 
   taxYear: currentYear,
   setTaxYear: (taxYear) => set({ taxYear }),
@@ -51,7 +51,7 @@ export const useAppStore = create<AppState>((set) => ({
 
   reset: () =>
     set({
-      file: null,
+      files: [],
       result: null,
       error: null,
       isCalculating: false,

@@ -19,7 +19,7 @@ class TaxLot(BaseModel):
     # Identyfikacja instrumentu
     symbol: str
     isin: str
-    country: str                    # z prefiksu ISIN, dla PIT/ZG
+    country: str                    # kraj giełdy (z listing_exchange), dla PIT/ZG
     listing_exchange: str
     asset_category: str             # "Stocks" lub "Equity and Index Options"
     currency: str
