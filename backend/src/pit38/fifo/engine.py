@@ -88,7 +88,7 @@ def run_fifo(
     # Kolejki FIFO per instrument (klucz = symbol)
     baskets: dict[str, deque[OpenLot]] = defaultdict(deque)
 
-    # Osobne koszyki dla krótkich pozycji opcyjnych (sell-to-open)
+    # Osobne koszyki dla krótkich pozycji (sell-to-open)
     short_baskets: dict[str, deque[OpenLot]] = defaultdict(deque)
 
     # Indeks corporate actions do przetworzenia
@@ -121,11 +121,11 @@ def run_fifo(
                 trade, short_baskets, baskets, basket_key,
                 nbp_client, result, tax_year,
             )
-        elif trade.is_option and "O" in trade.codes and trade.is_sell:
-            # Sell-to-open: wystawienie opcji (short)
+        elif "O" in trade.codes and trade.is_sell:
+            # Sell-to-open: otwarcie krótkiej pozycji (short sell)
             _process_short_open(trade, short_baskets, basket_key)
-        elif trade.is_option and "C" in trade.codes and trade.is_buy:
-            # Buy-to-close: zamknięcie krótkiej pozycji opcyjnej
+        elif "C" in trade.codes and trade.is_buy:
+            # Buy-to-close: zamknięcie krótkiej pozycji
             _process_short_close(
                 trade, short_baskets, basket_key, nbp_client, result, tax_year,
             )
@@ -151,8 +151,28 @@ def run_fifo(
 
 
 def _basket_key(trade: Trade) -> str:
-    """Klucz koszyka FIFO -- osobny per instrument."""
+    """Klucz koszyka FIFO -- osobny per instrument.
+
+    Dla Treasury Bills IBKR zmienia suffix procentowy w symbolu.
+    Po normalizacji w parserze symbol ma format 'US Treasury Bill MM/DD/YYYY (CUSIP)'.
+    Używamy ISIN jako stabilnego klucza.
+    """
+    if trade.asset_category == AssetCategory.TREASURY_BILLS:
+        return trade.isin
     return trade.symbol
+
+
+def _effective_price(trade: Trade) -> Decimal:
+    """Efektywna cena za jednostkę.
+
+    Dla Treasury Bills IBKR podaje cenę jako procent nominału
+    (np. 97.82 = 97.82% wartości nominalnej), więc przeliczamy
+    na kwotę per unit: price / 100.
+    Dla pozostałych instrumentów: cena bez zmian.
+    """
+    if trade.asset_category == AssetCategory.TREASURY_BILLS:
+        return trade.price / Decimal("100")
+    return trade.price
 
 
 def _process_buy(
@@ -165,7 +185,7 @@ def _process_buy(
         trade=trade,
         remaining_quantity=abs(trade.quantity),
         original_quantity=abs(trade.quantity),
-        price_per_unit=trade.price,
+        price_per_unit=_effective_price(trade),
     )
     baskets[basket_key].append(lot)
 
@@ -299,7 +319,7 @@ def _create_tax_lot(
 
     # Przychód sprzedaży: (cena × ilość × mnożnik - |prowizja|) × kurs NBP
     sell_multiplier = Decimal(sell_trade.multiplier)
-    sell_amount = sell_trade.price * matched_qty * sell_multiplier
+    sell_amount = _effective_price(sell_trade) * matched_qty * sell_multiplier
     sell_proceeds_pln = (sell_amount - abs(sell_commission)) * sell_nbp_rate
 
     profit_loss = sell_proceeds_pln - buy_cost_pln
@@ -324,7 +344,7 @@ def _create_tax_lot(
         sell_settle_date=sell_trade.settle_date,
         sell_nbp_rate_date=sell_nbp_rate_date,
         sell_nbp_rate=sell_nbp_rate,
-        sell_price=sell_trade.price,
+        sell_price=_effective_price(sell_trade),
         sell_quantity=matched_qty,
         sell_commission=sell_commission,
         sell_proceeds_pln=sell_proceeds_pln,
@@ -642,15 +662,15 @@ def _process_short_open(
     basket_key: str,
 ) -> None:
     """
-    Sell-to-open: wystawienie opcji (krótka pozycja).
+    Sell-to-open: otwarcie krótkiej pozycji (akcje, opcje, bony skarbowe).
 
-    Tworzy lot w short_baskets z ceną = otrzymana premia.
+    Tworzy lot w short_baskets z ceną = cena sprzedaży / otrzymana premia.
     """
     lot = OpenLot(
         trade=trade,
         remaining_quantity=abs(trade.quantity),
         original_quantity=abs(trade.quantity),
-        price_per_unit=trade.price,
+        price_per_unit=_effective_price(trade),
     )
     short_baskets[basket_key].append(lot)
 
@@ -664,7 +684,7 @@ def _process_short_close(
     tax_year: int | None,
 ) -> None:
     """
-    Buy-to-close lub wygaśnięcie krótkiej pozycji opcyjnej.
+    Buy-to-close lub wygaśnięcie krótkiej pozycji.
 
     Dopasowuje zamknięcie do lotów w short_baskets.
     TaxLot: sell_proceeds = premia z otwarcia, buy_cost = cena zamknięcia.
@@ -690,7 +710,7 @@ def _process_short_close(
                 open_lot=lot,
                 close_trade=trade,
                 matched_qty=matched_qty,
-                close_price=trade.price,
+                close_price=_effective_price(trade),
                 nbp_client=nbp_client,
                 result=result,
                 tax_year=tax_year,
@@ -706,7 +726,7 @@ def _process_short_close(
                 open_lot=lot,
                 close_trade=trade,
                 matched_qty=matched_qty,
-                close_price=trade.price,
+                close_price=_effective_price(trade),
                 nbp_client=nbp_client,
                 result=result,
                 tax_year=tax_year,
@@ -729,7 +749,7 @@ def _create_short_tax_lot(
     tax_year: int | None,
 ) -> None:
     """
-    Utwórz TaxLot dla zamknięcia krótkiej pozycji opcyjnej.
+    Utwórz TaxLot dla zamknięcia krótkiej pozycji.
 
     Semantyka odwrócona:
     - sell_proceeds = premia z otwarcia (sell-to-open) = przychód

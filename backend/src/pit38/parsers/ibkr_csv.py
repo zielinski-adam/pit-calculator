@@ -377,8 +377,9 @@ def _parse_financial_instruments(content: str, result: IBKRParseResult) -> None:
         expiry = None
         strike = None
         option_type = None
-        if asset_cat == AssetCategory.OPTIONS:
-            expiry_str = field_map.get("Expiry", "")
+        if asset_cat in (AssetCategory.OPTIONS, AssetCategory.TREASURY_BILLS):
+            # IBKR używa "Expiry" dla opcji i "Maturity" dla Treasury Bills
+            expiry_str = field_map.get("Expiry", "") or field_map.get("Maturity", "")
             if expiry_str:
                 try:
                     expiry = _parse_date(expiry_str)
@@ -494,8 +495,16 @@ def _parse_trade_row(row: list[str], result: IBKRParseResult) -> None:
         _enrich_trade_with_instrument(symbol, asset_category_str, result.instruments)
     )
 
+    # Dla Treasury Bills: czytelna nazwa zamiast CUSIP z suffixem procentowym
+    display_symbol = symbol
+    if asset_cat == AssetCategory.TREASURY_BILLS and expiry:
+        cusip = symbol.split(" ")[0]
+        display_symbol = f"US Treasury Bill {expiry:%m/%d/%Y} ({cusip})"
+    elif asset_cat == AssetCategory.TREASURY_BILLS:
+        display_symbol = symbol.split(" ")[0]
+
     trade = Trade(
-        symbol=symbol,
+        symbol=display_symbol,
         isin=isin,
         asset_category=asset_cat,
         currency=currency,

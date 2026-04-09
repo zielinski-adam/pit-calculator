@@ -613,6 +613,142 @@ class TestValidation:
 
 
 # ────────────────────────────────────────────────────────────
+# Short sell akcji (nie tylko opcji)
+# ────────────────────────────────────────────────────────────
+
+class TestStockShortSell:
+    """Short sell akcji z kodami O/C z IBKR."""
+
+    @pytest.mark.fifo
+    def test_stock_short_sell_open_close(self, mock_nbp: MagicMock):
+        """SELL z kodem O + BUY z kodem C → 1 TaxLot, brak warnings."""
+        trades = [
+            _make_trade(
+                symbol="NVTS", quantity=-500, price="7.06",
+                trade_date=date(2025, 5, 27), settle_date=date(2025, 5, 28),
+                codes=["O"],
+            ),
+            _make_trade(
+                symbol="NVTS", quantity=500, price="6.58",
+                trade_date=date(2025, 5, 27), settle_date=date(2025, 5, 28),
+                codes=["C", "P"],
+            ),
+        ]
+        result = run_fifo(trades, [], mock_nbp)
+
+        assert len(result.tax_lots) == 1
+        assert len(result.warnings) == 0
+
+        lot = result.tax_lots[0]
+        assert lot.symbol == "NVTS"
+        # Sell-to-open → przychód (sell_price = cena otwarcia short)
+        assert lot.sell_price == Decimal("7.06")
+        # Buy-to-close → koszt (buy_price = cena zamknięcia short)
+        assert lot.buy_price == Decimal("6.58")
+        # Sprzedał drożej, kupił taniej → zysk
+        assert lot.profit_loss_pln > 0
+
+    @pytest.mark.fifo
+    def test_stock_day_trade_short_and_long(self, mock_nbp: MagicMock):
+        """Scenariusz DJT: short sell + long w tym samym dniu → 2 TaxLots."""
+        trades = [
+            # Short sell to open
+            _make_trade(
+                symbol="DJT", quantity=-200, price="40.688",
+                trade_date=date(2025, 1, 14), settle_date=date(2025, 1, 15),
+                codes=["C", "O", "P"],
+            ),
+            # Buy to close short
+            _make_trade(
+                symbol="DJT", quantity=200, price="40.70",
+                trade_date=date(2025, 1, 14), settle_date=date(2025, 1, 15),
+                codes=["C", "O"],
+            ),
+            # Buy to open long
+            _make_trade(
+                symbol="DJT", quantity=200, price="40.785",
+                trade_date=date(2025, 1, 14), settle_date=date(2025, 1, 15),
+                codes=["O"],
+            ),
+            # Sell to close long
+            _make_trade(
+                symbol="DJT", quantity=-200, price="40.90",
+                trade_date=date(2025, 1, 14), settle_date=date(2025, 1, 15),
+                codes=["C"],
+            ),
+        ]
+        result = run_fifo(trades, [], mock_nbp)
+
+        assert len(result.tax_lots) == 2
+        assert len(result.warnings) == 0
+
+        # Lot 1: short (sell 40.688, buy 40.70) → strata
+        short_lot = result.tax_lots[0]
+        assert short_lot.sell_price == Decimal("40.688")
+        assert short_lot.buy_price == Decimal("40.70")
+        assert short_lot.profit_loss_pln < 0
+
+        # Lot 2: long (buy 40.785, sell 40.90) → zysk
+        long_lot = result.tax_lots[1]
+        assert long_lot.buy_price == Decimal("40.785")
+        assert long_lot.sell_price == Decimal("40.90")
+        assert long_lot.profit_loss_pln > 0
+
+    @pytest.mark.fifo
+    def test_stock_short_sell_profit(self, mock_nbp: MagicMock):
+        """Short sell z zyskiem: sprzedaj drogo, kup tanio."""
+        trades = [
+            _make_trade(
+                symbol="TEST", quantity=-100, price="100.00",
+                trade_date=date(2025, 6, 2), settle_date=date(2025, 6, 3),
+                codes=["O"], commission="-1.00",
+            ),
+            _make_trade(
+                symbol="TEST", quantity=100, price="80.00",
+                trade_date=date(2025, 6, 5), settle_date=date(2025, 6, 6),
+                codes=["C"], commission="-1.00",
+            ),
+        ]
+        result = run_fifo(trades, [], mock_nbp)
+
+        assert len(result.tax_lots) == 1
+        lot = result.tax_lots[0]
+        # sell_proceeds_pln > buy_cost_pln → zysk
+        assert lot.sell_proceeds_pln > lot.buy_cost_pln
+        assert lot.profit_loss_pln > 0
+
+    @pytest.mark.fifo
+    def test_stock_sell_without_codes_still_warns(self, mock_nbp: MagicMock):
+        """Sprzedaż bez kodu O i pustym koszyku → warning (backward compat)."""
+        trades = [
+            _make_trade(
+                symbol="XYZ", quantity=-100, price="50.00",
+                trade_date=date(2025, 3, 17), settle_date=date(2025, 3, 18),
+                codes=[],  # brak kodu O
+            ),
+        ]
+        result = run_fifo(trades, [], mock_nbp)
+
+        assert len(result.warnings) >= 1
+        assert "Short sell" in result.warnings[0]
+
+    @pytest.mark.fifo
+    def test_short_close_without_open_warns(self, mock_nbp: MagicMock):
+        """BUY z kodem C bez wcześniejszego short open → warning."""
+        trades = [
+            _make_trade(
+                symbol="XYZ", quantity=100, price="50.00",
+                trade_date=date(2025, 3, 17), settle_date=date(2025, 3, 18),
+                codes=["C"],
+            ),
+        ]
+        result = run_fifo(trades, [], mock_nbp)
+
+        assert len(result.warnings) >= 1
+        assert "Short close" in result.warnings[0]
+
+
+# ────────────────────────────────────────────────────────────
 # Integracja z prawdziwymi danymi
 # ────────────────────────────────────────────────────────────
 
